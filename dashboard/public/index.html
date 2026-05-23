@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>MultiAPI · Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #161a22; --border: #2a2f3a;
+    --fg: #e6e6e6; --muted: #8a93a3; --accent: #5cc8ff; --ok: #6ee7b7; --err: #ff8b8b;
+    --rest: #ff8b5e; --graphql: #e10098; --grpc: #00b4d8; --trpc: #62d4ff;
+    --jsonrpc: #ffd166; --connect: #7c5cff; --webhooks: #6ee7b7;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 ui-monospace, "JetBrains Mono", Menlo, monospace;
+         background: var(--bg); color: var(--fg); }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; }
+  header h1 { margin: 0; font-size: 18px; letter-spacing: 1px; }
+  header .badges { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge { padding: 2px 8px; border: 1px solid var(--border); border-radius: 10px; font-size: 11px; color: var(--muted); }
+  .badge.up { color: var(--ok); border-color: var(--ok); }
+  main { padding: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+          display: flex; flex-direction: column; }
+  .card h2 { margin: 0; padding: 10px 14px; font-size: 13px; letter-spacing: 1px;
+             border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+  .row { display: flex; gap: 6px; }
+  input[type=text] { flex: 1; background: #0a0c11; color: var(--fg); border: 1px solid var(--border);
+                     border-radius: 4px; padding: 6px 8px; font: inherit; }
+  button { background: var(--accent); color: #001821; border: none; border-radius: 4px;
+           padding: 6px 12px; font: inherit; cursor: pointer; font-weight: 600; }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button:disabled { opacity: 0.4; cursor: wait; }
+  .meta { color: var(--muted); font-size: 11px; display: flex; justify-content: space-between; }
+  pre { background: #0a0c11; border: 1px solid var(--border); border-radius: 4px;
+        padding: 8px; margin: 0; max-height: 220px; overflow: auto; font-size: 11.5px; }
+  #specific { padding: 0 20px 20px; }
+  .section-title { margin: 10px 0 14px; font-size: 13px; letter-spacing: 1px; color: var(--muted); }
+  #catalog { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .cat { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .cat h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: 1px; color: var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { padding: 3px 8px; border-radius: 4px; font-size: 11.5px; cursor: pointer;
+          background: #0a0c11; border: 1px solid var(--border); color: var(--fg); }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip.run { border-color: var(--ok); color: var(--ok); }
+  .chip.run::before { content: "▶ "; }
+  .docview { margin-top: 20px; background: var(--panel); border: 1px solid var(--accent);
+             border-radius: 8px; padding: 14px; max-height: 70vh; overflow: auto; }
+  .docview-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  #dv-md { max-height: none; white-space: pre-wrap; }
+  #dv-demo { margin-bottom: 10px; }
+  .latency { color: var(--accent); font-weight: 600; }
+  .err pre { border-color: var(--err); color: var(--err); }
+  footer { padding: 14px 24px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<header>
+  <h1>MULTIAPI · DASHBOARD</h1>
+  <div class="badges" id="health"></div>
+</header>
+
+<main id="grid"></main>
+
+<section id="specific">
+  <h2 class="section-title">SPECIFIC APIS · catálogo</h2>
+  <div id="catalog"></div>
+  <div id="docview" class="docview" hidden>
+    <div class="docview-head">
+      <strong id="dv-title"></strong>
+      <button class="ghost" onclick="document.getElementById('docview').hidden=true">fechar</button>
+    </div>
+    <div id="dv-demo"></div>
+    <pre id="dv-md"></pre>
+  </div>
+</section>
+
+<footer>
+  Dashboard proxia chamadas server-side (browser ↔ <code>:4000</code> ↔ APIs).
+  Latência inclui o proxy. <button class="ghost" id="bench">Benchmark · list ×20 todos</button>
+  <span id="bench-out"></span>
+</footer>
+
+<script>
+const PROTOS = [
+  { key: "rest",     name: "REST",      color: "var(--rest)",     ops: ["list", "create"] },
+  { key: "graphql",  name: "GraphQL",   color: "var(--graphql)",  ops: ["list"] },
+  { key: "grpc",     name: "gRPC",      color: "var(--grpc)",     ops: ["list", "create"] },
+  { key: "trpc",     name: "tRPC",      color: "var(--trpc)",     ops: ["list"] },
+  { key: "jsonrpc",  name: "JSON-RPC",  color: "var(--jsonrpc)",  ops: ["list", "create"] },
+  { key: "connect",  name: "Connect",   color: "var(--connect)",  ops: ["list"] },
+  { key: "webhooks", name: "Webhooks",  color: "var(--webhooks)", ops: ["trigger"] },
+];
+
+const grid = document.getElementById("grid");
+const health = document.getElementById("health");
+
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "style") Object.assign(e.style, v);
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v);
+  }
+  for (const k of kids) e.append(k?.nodeType ? k : document.createTextNode(k));
+  return e;
+}
+
+async function call(method, path, body) {
+  const opts = { method, headers: { "Content-Type": "application/json" } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  return r.json();
+}
+
+function render(out, r) {
+  out.classList.toggle("err", !r.ok);
+  out.innerHTML = "";
+  out.append(
+    el("div", { class: "meta" },
+      el("span", {}, r.transport || ""),
+      el("span", { class: "latency" }, `${r.latency_ms} ms`)
+    ),
+    el("pre", {}, JSON.stringify(r.ok ? r.data : r.error, null, 2))
+  );
+}
+
+for (const p of PROTOS) {
+  const card = el("div", { class: "card" });
+  const out = el("div");
+
+  const body = el("div", { class: "body" });
+  for (const op of p.ops) {
+    const row = el("div", { class: "row" });
+    if (op === "create" || op === "trigger") {
+      const inp = el("input", { type: "text", placeholder: "title", value: `via ${p.name}` });
+      const btn = el("button", {
+        onclick: async () => {
+          btn.disabled = true;
+          render(out, await call("POST", `/api/${p.key}/${op}`, { title: inp.value }));
+          btn.disabled = false;
+        }
+      }, op);
+      row.append(inp, btn);
+    } else {
+      const btn = el("button", {
+        onclick: async () => {
+          btn.disabled = true;
+          render(out, await call("GET", `/api/${p.key}/${op}`));
+          btn.disabled = false;
+        }
+      }, op);
+      row.append(btn);
+    }
+    body.append(row);
+  }
+  body.append(out);
+
+  card.append(
+    el("h2", {},
+      el("span", { class: "dot", style: { background: p.color } }),
+      p.name
+    ),
+    body
+  );
+  grid.append(card);
+}
+
+async function refreshHealth() {
+  const { up } = await call("GET", "/api/health");
+  health.innerHTML = "";
+  for (const p of PROTOS) {
+    const cls = up.includes(p.key) ? "badge up" : "badge";
+    health.append(el("span", { class: cls }, p.key + (up.includes(p.key) ? " ↑" : " ✗")));
+  }
+}
+refreshHealth();
+setInterval(refreshHealth, 5000);
+
+// ---------- catalog ----------
+(async () => {
+  const cat = await call("GET", "/api/catalog");
+  const root = document.getElementById("catalog");
+  for (const [group, items] of Object.entries(cat)) {
+    const card = el("div", { class: "cat" });
+    card.append(el("h3", {}, group.toUpperCase()));
+    const chips = el("div", { class: "chips" });
+    for (const it of items) {
+      const chip = el("span", { class: "chip" + (it.runnable ? " run" : ""),
+        onclick: () => openDoc(group, it.name, it.runnable) }, it.name);
+      chips.append(chip);
+    }
+    card.append(chips);
+    root.append(card);
+  }
+})();
+
+async function openDoc(group, name, runnable) {
+  const dv = document.getElementById("docview");
+  dv.hidden = false;
+  document.getElementById("dv-title").textContent = `${group} · ${name}`;
+  document.getElementById("dv-md").textContent = "carregando…";
+  const demo = document.getElementById("dv-demo");
+  demo.innerHTML = "";
+  if (runnable) {
+    const out = el("div");
+    const btn = el("button", {
+      onclick: async () => {
+        btn.disabled = true;
+        const r = await call("POST", `/api/specific/${name}/demo`);
+        render(out, r);
+        btn.disabled = false;
+      }
+    }, `▶ run ${name} demo`);
+    demo.append(btn, out);
+  }
+  const md = await fetch(`/api/docs/${group}/${name}`).then(r => r.text());
+  document.getElementById("dv-md").textContent = md;
+  dv.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+document.getElementById("bench").addEventListener("click", async () => {
+  const out = document.getElementById("bench-out");
+  out.textContent = " rodando…";
+  const results = {};
+  for (const p of PROTOS) {
+    if (!p.ops.includes("list")) continue;
+    const samples = [];
+    for (let i = 0; i < 20; i++) {
+      const r = await call("GET", `/api/${p.key}/list`);
+      if (r.ok) samples.push(r.latency_ms);
+    }
+    if (samples.length) {
+      const avg = samples.reduce((a, b) => a + b, 0) / samples.length;
+      results[p.name] = avg.toFixed(2);
+    }
+  }
+  out.textContent = " " + Object.entries(results).map(([k, v]) => `${k}=${v}ms`).join("  ");
+});
+</script>
+</body>
+</html>
